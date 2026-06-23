@@ -94,6 +94,7 @@ catalogs:
     floating-vue: ^5.2.2
     fuse.js: ^7.4.1
     katex: ^0.17.0
+    kokoro-js: ^1.2.1
     lz-string: ^1.5.0
     mermaid: ^11.15.0
     nanotar: ^0.3.0
@@ -205,7 +206,10 @@ allowBuilds:
   cypress: true
   esbuild: true
   keytar: true
+  onnxruntime-node: false
   playwright-chromium: true
+  protobufjs: false
+  sharp: false
   simple-git-hooks: true
   typeit: true
   unrs-resolver: true
