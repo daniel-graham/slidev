@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { createUnlockedAudioElement } from '../utils/playback'
+import { createUnlockedAudioElement, startAudioPlayback } from '../utils/playback'
 
 class FakeAudio {
   currentTime = 0
@@ -46,5 +46,24 @@ describe('kokoro narration playback unlock', () => {
     await Promise.resolve()
 
     expect(audio.pause).not.toHaveBeenCalled()
+  })
+
+  it('reports playback before the browser play promise settles', async () => {
+    let resolvePlay: (() => void) | undefined
+    class SlowAudio extends FakeAudio {
+      override play = vi.fn(() => new Promise<void>((resolve) => {
+        resolvePlay = resolve
+      }))
+    }
+
+    const audio = new SlowAudio('blob:generated-narration')
+    const onPlaying = vi.fn()
+    const playback = startAudioPlayback(audio as unknown as HTMLAudioElement, onPlaying)
+
+    expect(audio.play).toHaveBeenCalledOnce()
+    expect(onPlaying).toHaveBeenCalledOnce()
+
+    resolvePlay?.()
+    await playback
   })
 })

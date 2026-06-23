@@ -17,3 +17,9 @@ export function createUnlockedAudioElement() {
 
   return audio
 }
+
+export async function startAudioPlayback(audio: HTMLAudioElement, onPlaying: () => void) {
+  const playback = audio.play()
+  onPlaying()
+  await playback
+}

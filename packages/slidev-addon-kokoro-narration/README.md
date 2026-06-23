@@ -32,7 +32,7 @@ Useful props:
 - `voice`: Kokoro voice id, default `af_heart`.
 - `speed`: speech speed, default `1`.
 - `model`: model id, default `onnx-community/Kokoro-82M-v1.0-ONNX`.
-- `dtype`: model precision, default `q8`.
+- `dtype`: model precision, default `q4`.
 - `device`: `wasm`, `webgpu`, or `auto`, default `wasm`.
 - `preload`: upcoming slides to pre-generate after the first narration click,
   default `2`.

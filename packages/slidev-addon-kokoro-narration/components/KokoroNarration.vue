@@ -10,7 +10,7 @@ import {
   preloadUpcomingNarrations,
   registerNarration,
 } from '../utils/narration'
-import { createUnlockedAudioElement } from '../utils/playback'
+import { createUnlockedAudioElement, startAudioPlayback } from '../utils/playback'
 import { generateKokoroNarration } from '../utils/tts'
 
 type Device = 'auto' | 'wasm' | 'webgpu' | 'cpu'
@@ -33,7 +33,7 @@ const props = withDefaults(defineProps<{
   voice: 'af_heart',
   speed: 1,
   model: 'onnx-community/Kokoro-82M-v1.0-ONNX',
-  dtype: 'q8',
+  dtype: 'q4',
   device: 'wasm',
   label: 'Narrate',
   autoplay: false,
@@ -61,9 +61,9 @@ const narrationRequest = computed<NarrationRequest>(() => ({
 const isBusy = computed(() => status.value === 'loading' || status.value === 'generating')
 const buttonLabel = computed(() => {
   if (status.value === 'loading')
-    return progress.value > 0 ? `Loading ${Math.round(progress.value)}%` : 'Loading'
+    return progress.value > 0 ? `Cancel ${Math.round(progress.value)}%` : 'Cancel'
   if (status.value === 'generating')
-    return 'Generating'
+    return 'Cancel'
   if (status.value === 'playing')
     return 'Stop'
   if (status.value === 'error')
@@ -147,13 +147,15 @@ async function play() {
       status.value = 'error'
       error.value = 'Playback failed'
     }
-    await audio.play()
+    await startAudioPlayback(audio, () => {
+      if (currentPlayToken === playToken && isCurrentSlide.value)
+        status.value = 'playing'
+    })
     if (currentPlayToken !== playToken || !isCurrentSlide.value) {
       releaseAudio()
       status.value = 'idle'
       return
     }
-    status.value = 'playing'
     markNarrationPreloadStarted()
     preloadUpcoming()
   }
@@ -171,7 +173,7 @@ function toggle(event?: MouseEvent) {
   if (event?.currentTarget instanceof HTMLElement)
     event.currentTarget.blur()
 
-  if (status.value === 'playing') {
+  if (isBusy.value || status.value === 'playing') {
     playToken += 1
     releaseAudio()
     status.value = 'idle'
@@ -222,7 +224,7 @@ onBeforeUnmount(() => {
       v-if="isCurrentSlide"
       class="slidev-kokoro-narration"
       type="button"
-      :disabled="isBusy || !narrationText"
+      :disabled="!narrationText"
       :aria-busy="isBusy"
       :aria-label="buttonLabel"
       :title="error || buttonLabel"
