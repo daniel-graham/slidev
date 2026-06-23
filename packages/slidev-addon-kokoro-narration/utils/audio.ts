@@ -1,7 +1,9 @@
 export interface KokoroRawAudio {
-  data: ArrayLike<number>
+  audio?: ArrayLike<number>
+  data?: ArrayLike<number>
   sampling_rate?: number
   sample_rate?: number
+  toBlob?: () => Blob
 }
 
 export interface BrowserAudioUrlEnv {
@@ -30,12 +32,22 @@ function getSampleRate(audio: KokoroRawAudio) {
   return sampleRate
 }
 
+function getSamples(audio: KokoroRawAudio) {
+  const samples = audio.data ?? audio.audio
+  if (!samples)
+    throw new Error('Kokoro audio did not include sample data')
+  return samples
+}
+
 export function createWavBlob(audio: KokoroRawAudio, BlobCtor: typeof Blob = globalThis.Blob) {
   if (!BlobCtor)
     throw new Error('Blob is not available in this environment')
+  if (typeof audio.toBlob === 'function')
+    return audio.toBlob()
 
   const sampleRate = getSampleRate(audio)
-  const sampleCount = audio.data.length
+  const samples = getSamples(audio)
+  const sampleCount = samples.length
   const dataBytes = sampleCount * PCM_BYTES_PER_SAMPLE
   const buffer = new ArrayBuffer(WAV_HEADER_BYTES + dataBytes)
   const view = new DataView(buffer)
@@ -55,7 +67,7 @@ export function createWavBlob(audio: KokoroRawAudio, BlobCtor: typeof Blob = glo
   view.setUint32(40, dataBytes, true)
 
   for (let index = 0; index < sampleCount; index += 1)
-    view.setInt16(WAV_HEADER_BYTES + index * PCM_BYTES_PER_SAMPLE, toPcm16(audio.data[index]), true)
+    view.setInt16(WAV_HEADER_BYTES + index * PCM_BYTES_PER_SAMPLE, toPcm16(samples[index]), true)
 
   return new BlobCtor([buffer], { type: 'audio/wav' })
 }

@@ -53,6 +53,8 @@ let audio: HTMLAudioElement | undefined
 
 function releaseAudio() {
   if (audio) {
+    audio.onended = null
+    audio.onerror = null
     audio.pause()
     audio.src = ''
     audio = undefined
@@ -100,15 +102,15 @@ async function play() {
 
     audioUrl.value = createAudioObjectUrl(generated)
     audio = new Audio(audioUrl.value)
-    audio.addEventListener('ended', () => {
+    audio.onended = () => {
       releaseAudio()
       status.value = 'idle'
-    }, { once: true })
-    audio.addEventListener('error', () => {
+    }
+    audio.onerror = () => {
       releaseAudio()
       status.value = 'error'
       error.value = 'Playback failed'
-    }, { once: true })
+    }
     await audio.play()
     status.value = 'playing'
   }

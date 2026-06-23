@@ -43,4 +43,24 @@ describe('kokoro narration audio helpers', () => {
     expect(createObjectURL).toHaveBeenCalledWith(expect.objectContaining({ type: 'audio/wav' }))
     expect(revokeObjectURL).toHaveBeenCalledWith('blob:kokoro')
   })
+
+  it('accepts the Transformers RawAudio audio property shape', async () => {
+    const blob = createWavBlob({
+      audio: new Float32Array([0.25]),
+      sampling_rate: 22_050,
+    })
+
+    const view = new DataView(await blob.arrayBuffer())
+
+    expect(view.getUint32(24, true)).toBe(22_050)
+    expect(view.getInt16(44, true)).toBe(8191)
+  })
+
+  it('prefers RawAudio toBlob when available', () => {
+    const blob = new Blob(['wav'], { type: 'audio/wav' })
+    const toBlob = vi.fn(() => blob)
+
+    expect(createWavBlob({ toBlob })).toBe(blob)
+    expect(toBlob).toHaveBeenCalledOnce()
+  })
 })
