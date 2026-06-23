@@ -1,14 +1,20 @@
 <script setup lang="ts">
-import type { KokoroRawAudio } from '../utils/audio'
-import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
+import type { NarrationRequest } from '../utils/narration'
+import { useSlideContext } from '@slidev/client/context.ts'
+import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { createAudioObjectUrl, revokeAudioObjectUrl } from '../utils/audio'
+import {
+  getOrCreateNarration,
+  hasCachedNarration,
+  markNarrationPreloadStarted,
+  preloadUpcomingNarrations,
+  registerNarration,
+} from '../utils/narration'
+import { generateKokoroNarration } from '../utils/tts'
 
 type Device = 'auto' | 'wasm' | 'webgpu' | 'cpu'
 type DType = 'fp32' | 'fp16' | 'q8' | 'q4' | 'q4f16'
 type Status = 'idle' | 'loading' | 'generating' | 'playing' | 'error'
-interface KokoroTts {
-  generate: (text: string, options: { voice: string, speed: number }) => Promise<KokoroRawAudio>
-}
 
 const props = withDefaults(defineProps<{
   text?: string
@@ -19,6 +25,8 @@ const props = withDefaults(defineProps<{
   device?: Device
   label?: string
   autoplay?: boolean
+  preload?: number
+  cacheSize?: number
 }>(), {
   text: '',
   voice: 'af_heart',
@@ -28,13 +36,25 @@ const props = withDefaults(defineProps<{
   device: 'wasm',
   label: 'Narrate',
   autoplay: false,
+  preload: 2,
+  cacheSize: 8,
 })
 
+const { $nav, $route } = useSlideContext()
 const status = ref<Status>('idle')
 const error = ref('')
 const progress = ref(0)
 const audioUrl = ref('')
 const narrationText = computed(() => props.text.trim())
+const slideNo = computed(() => $route?.no ?? $nav.value.currentSlideNo.value)
+const narrationRequest = computed<NarrationRequest>(() => ({
+  text: narrationText.value,
+  voice: props.voice,
+  speed: props.speed,
+  model: props.model,
+  dtype: props.dtype,
+  device: props.device,
+}))
 const isBusy = computed(() => status.value === 'loading' || status.value === 'generating')
 const buttonLabel = computed(() => {
   if (status.value === 'loading')
@@ -48,8 +68,8 @@ const buttonLabel = computed(() => {
   return props.label
 })
 
-let ttsPromise: Promise<KokoroTts> | undefined
 let audio: HTMLAudioElement | undefined
+let unregisterNarration = () => {}
 
 function releaseAudio() {
   if (audio) {
@@ -70,19 +90,14 @@ function updateProgress(event: unknown) {
     progress.value = Math.max(progress.value, event.progress)
 }
 
-async function loadTts(): Promise<KokoroTts> {
-  if (!ttsPromise) {
-    status.value = 'loading'
-    const { KokoroTTS } = await import('kokoro-js')
-    ttsPromise = KokoroTTS
-      .from_pretrained(props.model, {
-        dtype: props.dtype,
-        device: props.device === 'auto' ? undefined : props.device,
-        progress_callback: updateProgress,
-      })
-      .then(tts => tts as unknown as KokoroTts)
-  }
-  return ttsPromise
+function preloadUpcoming() {
+  preloadUpcomingNarrations({
+    currentSlideNo: slideNo.value,
+    totalSlides: $nav.value.total.value,
+    preload: props.preload,
+    cacheSize: props.cacheSize,
+    generate: request => generateKokoroNarration(request),
+  })
 }
 
 async function play() {
@@ -90,15 +105,21 @@ async function play() {
     return
 
   error.value = ''
+  progress.value = 0
   releaseAudio()
 
   try {
-    const tts = await loadTts()
-    status.value = 'generating'
-    const generated = await tts.generate(narrationText.value, {
-      voice: props.voice,
-      speed: props.speed,
-    })
+    const request = narrationRequest.value
+    status.value = hasCachedNarration(request) ? 'generating' : 'loading'
+    const generated = await getOrCreateNarration(
+      request,
+      async (entry) => {
+        const generatedAudio = await generateKokoroNarration(entry, updateProgress)
+        status.value = 'generating'
+        return generatedAudio
+      },
+      props.cacheSize,
+    )
 
     audioUrl.value = createAudioObjectUrl(generated)
     audio = new Audio(audioUrl.value)
@@ -113,6 +134,8 @@ async function play() {
     }
     await audio.play()
     status.value = 'playing'
+    markNarrationPreloadStarted()
+    preloadUpcoming()
   }
   catch (err) {
     releaseAudio()
@@ -135,7 +158,22 @@ onMounted(() => {
     void play()
 })
 
-onBeforeUnmount(releaseAudio)
+watch(narrationRequest, (request) => {
+  unregisterNarration()
+  unregisterNarration = registerNarration(slideNo.value, request)
+  preloadUpcoming()
+}, { immediate: true })
+
+watch(slideNo, () => {
+  unregisterNarration()
+  unregisterNarration = registerNarration(slideNo.value, narrationRequest.value)
+  preloadUpcoming()
+})
+
+onBeforeUnmount(() => {
+  unregisterNarration()
+  releaseAudio()
+})
 </script>
 
 <template>

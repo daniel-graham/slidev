@@ -34,6 +34,12 @@ Useful props:
 - `model`: model id, default `onnx-community/Kokoro-82M-v1.0-ONNX`.
 - `dtype`: model precision, default `q8`.
 - `device`: `wasm`, `webgpu`, or `auto`, default `wasm`.
+- `preload`: upcoming slides to pre-generate after the first narration click,
+  default `2`.
+- `cacheSize`: max generated narrations kept in memory, default `8`.
 
 The component generates a WAV object URL in the browser and revokes it after
-playback or when the slide component unmounts.
+playback or when the slide component unmounts. After the first user starts
+narration, mounted future slides are pre-generated in the background so moving
+through the deck usually reuses warm audio instead of generating one slide at a
+time.
