@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import type { NarrationRequest } from '../utils/narration'
 import { useSlideContext } from '@slidev/client/context.ts'
-import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
+import { computed, onBeforeUnmount, onMounted, ref, unref, watch } from 'vue'
 import { createAudioObjectUrl, revokeAudioObjectUrl } from '../utils/audio'
 import {
   getOrCreateNarration,
@@ -41,14 +41,14 @@ const props = withDefaults(defineProps<{
   cacheSize: 8,
 })
 
-const { $nav, $route } = useSlideContext()
+const { $nav, $page, $route } = useSlideContext()
 const status = ref<Status>('idle')
 const error = ref('')
 const progress = ref(0)
 const audioUrl = ref('')
 const narrationText = computed(() => props.text.trim())
-const slideNo = computed(() => $route?.no ?? $nav.value.currentSlideNo.value)
-const activeSlideNo = computed(() => $nav.value.currentSlideNo.value)
+const slideNo = computed(() => $route?.no ?? unref($page))
+const activeSlideNo = computed(() => $nav.value.currentSlideNo)
 const isCurrentSlide = computed(() => slideNo.value === activeSlideNo.value)
 const narrationRequest = computed<NarrationRequest>(() => ({
   text: narrationText.value,
@@ -100,7 +100,7 @@ function preloadUpcoming() {
 
   preloadUpcomingNarrations({
     currentSlideNo: slideNo.value,
-    totalSlides: $nav.value.total.value,
+    totalSlides: $nav.value.total,
     preload: props.preload,
     cacheSize: props.cacheSize,
     generate: request => generateKokoroNarration(request),
@@ -217,30 +217,36 @@ onBeforeUnmount(() => {
 </script>
 
 <template>
-  <button
-    class="slidev-kokoro-narration"
-    type="button"
-    :disabled="isBusy || !narrationText"
-    :aria-busy="isBusy"
-    :aria-label="buttonLabel"
-    :title="error || buttonLabel"
-    @click="toggle"
-  >
-    <span class="slidev-kokoro-narration__mark" :data-status="status" />
-    <span>{{ buttonLabel }}</span>
-  </button>
+  <Teleport to="body">
+    <button
+      v-if="isCurrentSlide"
+      class="slidev-kokoro-narration"
+      type="button"
+      :disabled="isBusy || !narrationText"
+      :aria-busy="isBusy"
+      :aria-label="buttonLabel"
+      :title="error || buttonLabel"
+      @click="toggle"
+    >
+      <span class="slidev-kokoro-narration__mark" :data-status="status" />
+      <span>{{ buttonLabel }}</span>
+    </button>
+  </Teleport>
 </template>
 
 <style scoped>
 .slidev-kokoro-narration {
   position: fixed;
-  right: 1rem;
-  bottom: 1rem;
-  z-index: 50;
+  right: 2rem;
+  bottom: 4.25rem;
+  z-index: 1000;
+  pointer-events: auto;
+  box-sizing: border-box;
   display: inline-flex;
   align-items: center;
   gap: 0.5rem;
   min-width: 7.5rem;
+  max-width: calc(100vw - 4rem);
   height: 2.35rem;
   padding: 0 0.85rem;
   border: 1px solid rgb(148 163 184 / 40%);
