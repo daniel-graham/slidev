@@ -9,9 +9,15 @@ import {
   markNarrationPreloadStarted,
   preloadUpcomingNarrations,
   registerNarration,
+  stopNarrationPreload,
 } from '../utils/narration'
 import { createUnlockedAudioElement, startAudioPlayback } from '../utils/playback'
-import { generateKokoroNarration } from '../utils/tts'
+import { generateKokoroNarration, loadKokoroTts, terminateKokoroWorker } from '../utils/tts'
+
+function releaseFocus() {
+  if (document.activeElement instanceof HTMLElement)
+    document.activeElement.blur()
+}
 
 type Device = 'auto' | 'wasm' | 'webgpu' | 'cpu'
 type DType = 'fp32' | 'fp16' | 'q8' | 'q4' | 'q4f16'
@@ -48,7 +54,7 @@ const progress = ref(0)
 const audioUrl = ref('')
 const narrationText = computed(() => props.text.trim())
 const slideNo = computed(() => $route?.no ?? unref($page))
-const activeSlideNo = computed(() => $nav.value.currentSlideNo)
+const activeSlideNo = computed(() => unref($nav.value.currentSlideNo))
 const isCurrentSlide = computed(() => slideNo.value === activeSlideNo.value)
 const narrationRequest = computed<NarrationRequest>(() => ({
   text: narrationText.value,
@@ -100,11 +106,19 @@ function preloadUpcoming() {
 
   preloadUpcomingNarrations({
     currentSlideNo: slideNo.value,
-    totalSlides: $nav.value.total,
+    totalSlides: unref($nav.value.total),
     preload: props.preload,
     cacheSize: props.cacheSize,
     generate: request => generateKokoroNarration(request),
   })
+}
+
+function prewarmModel() {
+  if (isCurrentSlide.value) {
+    void loadKokoroTts(narrationRequest.value).catch((err) => {
+      console.warn('Failed to pre-warm Kokoro TTS:', err)
+    })
+  }
 }
 
 async function play() {
@@ -141,6 +155,7 @@ async function play() {
     audio.onended = () => {
       releaseAudio()
       status.value = 'idle'
+      stopNarrationPreload()
     }
     audio.onerror = () => {
       releaseAudio()
@@ -169,17 +184,25 @@ async function play() {
   }
 }
 
-function toggle(event?: MouseEvent) {
-  if (event?.currentTarget instanceof HTMLElement)
-    event.currentTarget.blur()
+function toggle(event?: MouseEvent | KeyboardEvent) {
+  releaseFocus()
 
   if (isBusy.value || status.value === 'playing') {
     playToken += 1
     releaseAudio()
     status.value = 'idle'
+    stopNarrationPreload()
+    terminateKokoroWorker()
     return
   }
   void play()
+}
+
+function onControlKeydown(event: KeyboardEvent) {
+  if (event.key !== 'Enter' && event.key !== ' ')
+    return
+  event.preventDefault()
+  toggle(event)
 }
 
 onMounted(() => {
@@ -191,48 +214,55 @@ watch(narrationRequest, (request) => {
   unregisterNarration()
   unregisterNarration = registerNarration(slideNo.value, request)
   preloadUpcoming()
+  prewarmModel()
 }, { immediate: true })
 
 watch(slideNo, () => {
   unregisterNarration()
   unregisterNarration = registerNarration(slideNo.value, narrationRequest.value)
   preloadUpcoming()
+  prewarmModel()
 })
 
-watch(activeSlideNo, () => {
-  if (!isCurrentSlide.value) {
+watch(isCurrentSlide, (current) => {
+  if (!current) {
     playToken += 1
     releaseAudio()
     status.value = 'idle'
     error.value = ''
+    stopNarrationPreload()
     return
   }
 
   preloadUpcoming()
-})
+  prewarmModel()
+}, { immediate: true })
 
 onBeforeUnmount(() => {
   playToken += 1
   unregisterNarration()
   releaseAudio()
+  stopNarrationPreload()
 })
 </script>
 
 <template>
   <Teleport to="body">
-    <button
+    <div
       v-if="isCurrentSlide"
       class="slidev-kokoro-narration"
-      type="button"
-      :disabled="!narrationText"
+      role="button"
+      tabindex="-1"
+      :aria-disabled="!narrationText"
       :aria-busy="isBusy"
       :aria-label="buttonLabel"
       :title="error || buttonLabel"
       @click="toggle"
+      @keydown="onControlKeydown"
     >
       <span class="slidev-kokoro-narration__mark" :data-status="status" />
       <span>{{ buttonLabel }}</span>
-    </button>
+    </div>
   </Teleport>
 </template>
 
@@ -251,21 +281,56 @@ onBeforeUnmount(() => {
   max-width: calc(100vw - 4rem);
   height: 2.35rem;
   padding: 0 0.85rem;
-  border: 1px solid rgb(148 163 184 / 40%);
+  border: 1px solid rgb(148 163 184 / 30%);
   border-radius: 999px;
   color: rgb(15 23 42);
-  background: rgb(255 255 255 / 88%);
-  box-shadow: 0 10px 28px rgb(15 23 42 / 18%);
+  background: rgb(255 255 255 / 85%);
+  box-shadow: 0 10px 28px rgb(15 23 42 / 12%), 0 4px 10px rgb(15 23 42 / 4%);
   font:
     600 0.82rem/1 system-ui,
     sans-serif;
   cursor: pointer;
   backdrop-filter: blur(10px);
+  -webkit-backdrop-filter: blur(10px);
+  transition: all 0.25s cubic-bezier(0.4, 0, 0.2, 1);
+  transform: translateY(0);
 }
 
-.slidev-kokoro-narration:disabled {
-  cursor: wait;
-  opacity: 0.68;
+.slidev-kokoro-narration:hover:not([aria-disabled='true']) {
+  transform: translateY(-2px);
+  background: rgb(255 255 255 / 95%);
+  border-color: rgb(148 163 184 / 50%);
+  box-shadow: 0 12px 32px rgb(15 23 42 / 16%), 0 6px 12px rgb(15 23 42 / 6%);
+}
+
+.slidev-kokoro-narration:active:not([aria-disabled='true']) {
+  transform: translateY(1px);
+  background: rgb(255 255 255 / 80%);
+  box-shadow: 0 6px 16px rgb(15 23 42 / 10%);
+}
+
+.slidev-kokoro-narration[aria-disabled='true'] {
+  cursor: not-allowed;
+  opacity: 0.6;
+  pointer-events: none;
+}
+
+html.dark .slidev-kokoro-narration {
+  color: rgb(241 245 249);
+  background: rgb(15 23 42 / 75%);
+  border: 1px solid rgb(255 255 255 / 12%);
+  box-shadow: 0 10px 28px rgb(0 0 0 / 30%), 0 4px 10px rgb(0 0 0 / 15%);
+}
+
+html.dark .slidev-kokoro-narration:hover:not([aria-disabled='true']) {
+  background: rgb(15 23 42 / 85%);
+  border-color: rgb(255 255 255 / 20%);
+  box-shadow: 0 12px 32px rgb(0 0 0 / 40%), 0 6px 12px rgb(0 0 0 / 20%);
+}
+
+html.dark .slidev-kokoro-narration:active:not([aria-disabled='true']) {
+  background: rgb(15 23 42 / 65%);
+  box-shadow: 0 6px 16px rgb(0 0 0 / 25%);
 }
 
 .slidev-kokoro-narration__mark {

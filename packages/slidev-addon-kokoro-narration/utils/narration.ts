@@ -54,12 +54,33 @@ function touchCacheKey(key: string, maxEntries: number) {
   }
 }
 
+let currentPreloadSlideNo = 0
+let preloadRunId = 0
+
+/**
+ * Marks that narration preloading has been started.
+ */
 export function markNarrationPreloadStarted() {
   preloadStarted = true
 }
 
+/**
+ * Checks if narration preloading has been started.
+ *
+ * @returns True if preloading is active.
+ */
 export function hasNarrationPreloadStarted() {
   return preloadStarted
+}
+
+/**
+ * Stops the narration preloading process.
+ *
+ * Cancels further background audio generations.
+ */
+export function stopNarrationPreload() {
+  preloadStarted = false
+  preloadRunId += 1
 }
 
 export function registerNarration(slideNo: number, request: NarrationRequest) {
@@ -101,7 +122,16 @@ export function getOrCreateNarration(
   return generated
 }
 
-export function preloadUpcomingNarrations(options: {
+/**
+ * Preloads registered upcoming slide narrations sequentially.
+ *
+ * Spaces out generations with a 1000ms delay to yield CPU back to the main thread.
+ * Checks for slide changes and cancellation to terminate early.
+ *
+ * @param options Configuration for preloading.
+ * @returns A promise that resolves when preloading is done or cancelled.
+ */
+export async function preloadUpcomingNarrations(options: {
   currentSlideNo: number
   totalSlides: number
   preload: number
@@ -111,12 +141,29 @@ export function preloadUpcomingNarrations(options: {
   if (!preloadStarted)
     return
 
+  currentPreloadSlideNo = options.currentSlideNo
+  const mySlideNo = options.currentSlideNo
+  const runId = preloadRunId += 1
+
   const preloadCount = normalizePositiveInteger(options.preload, 0)
   const lastSlide = Math.min(options.totalSlides, options.currentSlideNo + preloadCount)
+
   for (let slideNo = options.currentSlideNo + 1; slideNo <= lastSlide; slideNo += 1) {
+    // Yield to the browser main thread before generating the next slide's audio
+    await new Promise(resolve => setTimeout(resolve, 1000))
+
+    // Abort if preloading was stopped or the user navigated to another slide
+    if (!preloadStarted || currentPreloadSlideNo !== mySlideNo || runId !== preloadRunId)
+      break
+
     const request = registeredNarrations.get(slideNo)
-    if (request)
-      void getOrCreateNarration(request, options.generate, options.cacheSize).catch(() => {})
+    if (request) {
+      try {
+        await getOrCreateNarration(request, options.generate, options.cacheSize)
+      } catch (err) {
+        console.warn(`Failed to preload narration for slide ${slideNo}:`, err)
+      }
+    }
   }
 }
 

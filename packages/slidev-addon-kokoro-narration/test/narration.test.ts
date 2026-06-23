@@ -36,31 +36,36 @@ describe('kokoro narration cache', () => {
   })
 
   it('preloads registered upcoming slides only after narration has started', async () => {
+    vi.useFakeTimers()
     const generate = vi.fn(async entry => ({ data: [entry.speed], sample_rate: 24_000 }))
 
     registerNarration(2, { ...request, text: 'Second slide.', speed: 1.1 })
     registerNarration(3, { ...request, text: 'Third slide.', speed: 1.2 })
-    preloadUpcomingNarrations({
+    const p1 = preloadUpcomingNarrations({
       currentSlideNo: 1,
       totalSlides: 3,
       preload: 2,
       cacheSize: 8,
       generate,
     })
+    await vi.advanceTimersByTimeAsync(2000)
+    await p1
 
     expect(generate).not.toHaveBeenCalled()
 
     markNarrationPreloadStarted()
-    preloadUpcomingNarrations({
+    const p2 = preloadUpcomingNarrations({
       currentSlideNo: 1,
       totalSlides: 3,
       preload: 2,
       cacheSize: 8,
       generate,
     })
+    await vi.advanceTimersByTimeAsync(2000)
+    await p2
 
-    await Promise.resolve()
     expect(generate).toHaveBeenCalledTimes(2)
+    vi.useRealTimers()
   })
 
   it('evicts older generated narrations when the cache is full', async () => {
