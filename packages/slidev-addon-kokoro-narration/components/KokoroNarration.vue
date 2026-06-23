@@ -10,6 +10,7 @@ import {
   preloadUpcomingNarrations,
   registerNarration,
 } from '../utils/narration'
+import { createUnlockedAudioElement } from '../utils/playback'
 import { generateKokoroNarration } from '../utils/tts'
 
 type Device = 'auto' | 'wasm' | 'webgpu' | 'cpu'
@@ -47,6 +48,8 @@ const progress = ref(0)
 const audioUrl = ref('')
 const narrationText = computed(() => props.text.trim())
 const slideNo = computed(() => $route?.no ?? $nav.value.currentSlideNo.value)
+const activeSlideNo = computed(() => $nav.value.currentSlideNo.value)
+const isCurrentSlide = computed(() => slideNo.value === activeSlideNo.value)
 const narrationRequest = computed<NarrationRequest>(() => ({
   text: narrationText.value,
   voice: props.voice,
@@ -70,6 +73,7 @@ const buttonLabel = computed(() => {
 
 let audio: HTMLAudioElement | undefined
 let unregisterNarration = () => {}
+let playToken = 0
 
 function releaseAudio() {
   if (audio) {
@@ -91,6 +95,9 @@ function updateProgress(event: unknown) {
 }
 
 function preloadUpcoming() {
+  if (!isCurrentSlide.value)
+    return
+
   preloadUpcomingNarrations({
     currentSlideNo: slideNo.value,
     totalSlides: $nav.value.total.value,
@@ -107,6 +114,8 @@ async function play() {
   error.value = ''
   progress.value = 0
   releaseAudio()
+  audio = createUnlockedAudioElement()
+  const currentPlayToken = playToken += 1
 
   try {
     const request = narrationRequest.value
@@ -115,14 +124,20 @@ async function play() {
       request,
       async (entry) => {
         const generatedAudio = await generateKokoroNarration(entry, updateProgress)
-        status.value = 'generating'
+        if (currentPlayToken === playToken && isCurrentSlide.value)
+          status.value = 'generating'
         return generatedAudio
       },
       props.cacheSize,
     )
 
+    if (currentPlayToken !== playToken || !isCurrentSlide.value) {
+      status.value = 'idle'
+      return
+    }
+
     audioUrl.value = createAudioObjectUrl(generated)
-    audio = new Audio(audioUrl.value)
+    audio.src = audioUrl.value
     audio.onended = () => {
       releaseAudio()
       status.value = 'idle'
@@ -133,19 +148,31 @@ async function play() {
       error.value = 'Playback failed'
     }
     await audio.play()
+    if (currentPlayToken !== playToken || !isCurrentSlide.value) {
+      releaseAudio()
+      status.value = 'idle'
+      return
+    }
     status.value = 'playing'
     markNarrationPreloadStarted()
     preloadUpcoming()
   }
   catch (err) {
+    if (currentPlayToken !== playToken)
+      return
+
     releaseAudio()
     status.value = 'error'
     error.value = err instanceof Error ? err.message : String(err)
   }
 }
 
-function toggle() {
+function toggle(event?: MouseEvent) {
+  if (event?.currentTarget instanceof HTMLElement)
+    event.currentTarget.blur()
+
   if (status.value === 'playing') {
+    playToken += 1
     releaseAudio()
     status.value = 'idle'
     return
@@ -170,7 +197,20 @@ watch(slideNo, () => {
   preloadUpcoming()
 })
 
+watch(activeSlideNo, () => {
+  if (!isCurrentSlide.value) {
+    playToken += 1
+    releaseAudio()
+    status.value = 'idle'
+    error.value = ''
+    return
+  }
+
+  preloadUpcoming()
+})
+
 onBeforeUnmount(() => {
+  playToken += 1
   unregisterNarration()
   releaseAudio()
 })
