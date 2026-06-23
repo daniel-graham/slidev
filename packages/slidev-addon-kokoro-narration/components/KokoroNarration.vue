@@ -12,12 +12,7 @@ import {
   stopNarrationPreload,
 } from '../utils/narration'
 import { createUnlockedAudioElement, startAudioPlayback } from '../utils/playback'
-import { generateKokoroNarration, loadKokoroTts, terminateKokoroWorker } from '../utils/tts'
-
-function releaseFocus() {
-  if (document.activeElement instanceof HTMLElement)
-    document.activeElement.blur()
-}
+import { generateKokoroNarration, loadKokoroTts } from '../utils/tts'
 
 type Device = 'auto' | 'wasm' | 'webgpu' | 'cpu'
 type DType = 'fp32' | 'fp16' | 'q8' | 'q4' | 'q4f16'
@@ -77,9 +72,29 @@ const buttonLabel = computed(() => {
   return props.label
 })
 
+// Guard: prevents any async callback from writing Vue refs after this component
+// has been torn down. Without this, the Vue scheduler crashes trying to flush
+// updates on a null vnode (TypeError: Cannot read properties of null (reading 'flags')).
+let isMounted = false
+
 let audio: HTMLAudioElement | undefined
 let unregisterNarration = () => {}
 let playToken = 0
+
+function safeSetStatus(s: Status) {
+  if (isMounted)
+    status.value = s
+}
+
+function safeSetError(msg: string) {
+  if (isMounted)
+    error.value = msg
+}
+
+function safeSetProgress(p: number) {
+  if (isMounted)
+    progress.value = p
+}
 
 function releaseAudio() {
   if (audio) {
@@ -91,17 +106,21 @@ function releaseAudio() {
   }
   if (audioUrl.value) {
     revokeAudioObjectUrl(audioUrl.value)
-    audioUrl.value = ''
+    if (isMounted)
+      audioUrl.value = ''
   }
 }
 
 function updateProgress(event: unknown) {
   if (event && typeof event === 'object' && 'progress' in event && typeof event.progress === 'number')
-    progress.value = Math.max(progress.value, event.progress)
+    safeSetProgress(Math.max(progress.value, event.progress))
 }
 
 function preloadUpcoming() {
-  if (!isCurrentSlide.value)
+  // Guard: never start a preload loop from an unmounted component — the loop
+  // captures `isMounted` in its closure so it can abort if the component dies
+  // mid-preload without calling any Vue reactivity.
+  if (!isCurrentSlide.value || !isMounted)
     return
 
   preloadUpcomingNarrations({
@@ -114,7 +133,7 @@ function preloadUpcoming() {
 }
 
 function prewarmModel() {
-  if (isCurrentSlide.value) {
+  if (isCurrentSlide.value && isMounted) {
     void loadKokoroTts(narrationRequest.value).catch((err) => {
       console.warn('Failed to pre-warm Kokoro TTS:', err)
     })
@@ -125,28 +144,33 @@ async function play() {
   if (!narrationText.value || isBusy.value)
     return
 
-  error.value = ''
-  progress.value = 0
+  safeSetError('')
+  safeSetProgress(0)
   releaseAudio()
+
+  // Defer audio element creation until we actually need it (not on component
+  // mount). Creating it early calls audio.play() for the unlock trick, which
+  // can steal the browser's audio-focus and interfere with keyboard handling.
   audio = createUnlockedAudioElement()
   const currentPlayToken = playToken += 1
 
   try {
     const request = narrationRequest.value
-    status.value = hasCachedNarration(request) ? 'generating' : 'loading'
+    safeSetStatus(hasCachedNarration(request) ? 'generating' : 'loading')
+
     const generated = await getOrCreateNarration(
       request,
       async (entry) => {
         const generatedAudio = await generateKokoroNarration(entry, updateProgress)
         if (currentPlayToken === playToken && isCurrentSlide.value)
-          status.value = 'generating'
+          safeSetStatus('generating')
         return generatedAudio
       },
       props.cacheSize,
     )
 
-    if (currentPlayToken !== playToken || !isCurrentSlide.value) {
-      status.value = 'idle'
+    if (currentPlayToken !== playToken || !isCurrentSlide.value || !isMounted) {
+      safeSetStatus('idle')
       return
     }
 
@@ -154,60 +178,71 @@ async function play() {
     audio.src = audioUrl.value
     audio.onended = () => {
       releaseAudio()
-      status.value = 'idle'
-      stopNarrationPreload()
+      safeSetStatus('idle')
+      // Only trigger preloading if we're still alive and on this slide
+      if (isMounted && isCurrentSlide.value) {
+        markNarrationPreloadStarted()
+        preloadUpcoming()
+      }
     }
     audio.onerror = () => {
       releaseAudio()
-      status.value = 'error'
-      error.value = 'Playback failed'
+      safeSetStatus('error')
+      safeSetError('Playback failed')
     }
+
     await startAudioPlayback(audio, () => {
       if (currentPlayToken === playToken && isCurrentSlide.value)
-        status.value = 'playing'
+        safeSetStatus('playing')
     })
-    if (currentPlayToken !== playToken || !isCurrentSlide.value) {
+
+    if (currentPlayToken !== playToken || !isCurrentSlide.value || !isMounted) {
       releaseAudio()
-      status.value = 'idle'
-      return
+      safeSetStatus('idle')
     }
-    markNarrationPreloadStarted()
-    preloadUpcoming()
   }
   catch (err) {
     if (currentPlayToken !== playToken)
       return
 
     releaseAudio()
-    status.value = 'error'
-    error.value = err instanceof Error ? err.message : String(err)
+    safeSetStatus('error')
+    safeSetError(err instanceof Error ? err.message : String(err))
   }
 }
 
-function toggle(event?: MouseEvent | KeyboardEvent) {
-  releaseFocus()
+function toggle(event?: MouseEvent) {
+  // Immediately blur so the narration button does NOT hold keyboard focus.
+  // Slidev's keyboard navigation (arrow keys, space) relies on document-level
+  // keydown events. If this button keeps focus, keydown fires on the button
+  // instead of reaching Slidev's router handler.
+  if (event?.currentTarget instanceof HTMLElement)
+    event.currentTarget.blur()
 
   if (isBusy.value || status.value === 'playing') {
     playToken += 1
     releaseAudio()
-    status.value = 'idle'
+    safeSetStatus('idle')
     stopNarrationPreload()
-    terminateKokoroWorker()
     return
   }
   void play()
 }
 
-function onControlKeydown(event: KeyboardEvent) {
-  if (event.key !== 'Enter' && event.key !== ' ')
-    return
-  event.preventDefault()
-  toggle(event)
-}
-
 onMounted(() => {
+  isMounted = true
   if (props.autoplay)
     void play()
+})
+
+onBeforeUnmount(() => {
+  // Set isMounted = false FIRST so any in-flight async callback or watcher
+  // callback finds the guard and skips the Vue ref write.
+  isMounted = false
+  playToken += 1
+  unregisterNarration()
+  releaseAudio()
+  stopNarrationPreload()
 })
 
 watch(narrationRequest, (request) => {
@@ -228,41 +263,51 @@ watch(isCurrentSlide, (current) => {
   if (!current) {
     playToken += 1
     releaseAudio()
-    status.value = 'idle'
-    error.value = ''
-    stopNarrationPreload()
+    safeSetStatus('idle')
+    safeSetError('')
     return
   }
 
   preloadUpcoming()
   prewarmModel()
 }, { immediate: true })
-
-onBeforeUnmount(() => {
-  playToken += 1
-  unregisterNarration()
-  releaseAudio()
-  stopNarrationPreload()
-})
 </script>
 
 <template>
-  <Teleport to="body">
-    <div
-      v-if="isCurrentSlide"
+  <!--
+    Strategy: Teleport with :disabled + v-show.
+
+    The challenge: Slidev wraps slides in transform:scale(), so position:fixed
+    inside the slide is anchored to the slide container, not the viewport.
+    We need Teleport to body for correct viewport positioning.
+
+    The trap: v-if on a Teleport causes the body DOM node to be created/removed
+    during Slidev's TransitionGroup slide transitions. This races with Vue's
+    vnode reconciliation (multiple slides mount/unmount simultaneously during
+    the fade) and crashes with 'Cannot read properties of null (reading flags)'.
+
+    Solution: use :disabled="!isCurrentSlide" + v-show="isCurrentSlide".
+    - When disabled=true (not current slide): Teleport renders inline inside
+      the slide's own DOM tree. v-show hides it. No body mutation.
+    - When disabled=false (current slide): Teleport moves the button to body
+      so position:fixed is viewport-anchored. v-show shows it.
+    This way the button DOM node is never created or destroyed during a slide
+    transition — it just moves in/out of body, which is safe and race-free.
+  -->
+  <Teleport to="body" :disabled="!isCurrentSlide">
+    <button
+      v-show="isCurrentSlide"
       class="slidev-kokoro-narration"
-      role="button"
-      tabindex="-1"
-      :aria-disabled="!narrationText"
+      type="button"
+      :disabled="!narrationText"
       :aria-busy="isBusy"
       :aria-label="buttonLabel"
       :title="error || buttonLabel"
       @click="toggle"
-      @keydown="onControlKeydown"
     >
       <span class="slidev-kokoro-narration__mark" :data-status="status" />
       <span>{{ buttonLabel }}</span>
-    </div>
+    </button>
   </Teleport>
 </template>
 
@@ -296,23 +341,22 @@ onBeforeUnmount(() => {
   transform: translateY(0);
 }
 
-.slidev-kokoro-narration:hover:not([aria-disabled='true']) {
+.slidev-kokoro-narration:hover:not(:disabled) {
   transform: translateY(-2px);
   background: rgb(255 255 255 / 95%);
   border-color: rgb(148 163 184 / 50%);
   box-shadow: 0 12px 32px rgb(15 23 42 / 16%), 0 6px 12px rgb(15 23 42 / 6%);
 }
 
-.slidev-kokoro-narration:active:not([aria-disabled='true']) {
+.slidev-kokoro-narration:active:not(:disabled) {
   transform: translateY(1px);
   background: rgb(255 255 255 / 80%);
   box-shadow: 0 6px 16px rgb(15 23 42 / 10%);
 }
 
-.slidev-kokoro-narration[aria-disabled='true'] {
+.slidev-kokoro-narration:disabled {
   cursor: not-allowed;
   opacity: 0.6;
-  pointer-events: none;
 }
 
 html.dark .slidev-kokoro-narration {
@@ -322,13 +366,13 @@ html.dark .slidev-kokoro-narration {
   box-shadow: 0 10px 28px rgb(0 0 0 / 30%), 0 4px 10px rgb(0 0 0 / 15%);
 }
 
-html.dark .slidev-kokoro-narration:hover:not([aria-disabled='true']) {
+html.dark .slidev-kokoro-narration:hover:not(:disabled) {
   background: rgb(15 23 42 / 85%);
   border-color: rgb(255 255 255 / 20%);
   box-shadow: 0 12px 32px rgb(0 0 0 / 40%), 0 6px 12px rgb(0 0 0 / 20%);
 }
 
-html.dark .slidev-kokoro-narration:active:not([aria-disabled='true']) {
+html.dark .slidev-kokoro-narration:active:not(:disabled) {
   background: rgb(15 23 42 / 65%);
   box-shadow: 0 6px 16px rgb(0 0 0 / 25%);
 }

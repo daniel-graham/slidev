@@ -149,20 +149,29 @@ export async function preloadUpcomingNarrations(options: {
   const lastSlide = Math.min(options.totalSlides, options.currentSlideNo + preloadCount)
 
   for (let slideNo = options.currentSlideNo + 1; slideNo <= lastSlide; slideNo += 1) {
-    // Yield to the browser main thread before generating the next slide's audio
-    await new Promise(resolve => setTimeout(resolve, 1000))
+    // Yield CPU back to the main thread between preloads.
+    // 200ms is enough to let Slidev's scheduler and input events drain
+    // without perceptibly delaying the preload pipeline.
+    await new Promise(resolve => setTimeout(resolve, 200))
 
-    // Abort if preloading was stopped or the user navigated to another slide
+    // Double-check after the yield: preloading may have been stopped or
+    // the user navigated while we were awaiting.
     if (!preloadStarted || currentPreloadSlideNo !== mySlideNo || runId !== preloadRunId)
       break
 
     const request = registeredNarrations.get(slideNo)
-    if (request) {
-      try {
-        await getOrCreateNarration(request, options.generate, options.cacheSize)
-      } catch (err) {
-        console.warn(`Failed to preload narration for slide ${slideNo}:`, err)
-      }
+    if (!request)
+      continue
+
+    // Re-check once more before spawning a potentially long async generate call.
+    if (!preloadStarted || runId !== preloadRunId)
+      break
+
+    try {
+      await getOrCreateNarration(request, options.generate, options.cacheSize)
+    }
+    catch (err) {
+      console.warn(`Failed to preload narration for slide ${slideNo}:`, err)
     }
   }
 }
