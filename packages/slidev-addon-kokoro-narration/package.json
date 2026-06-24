@@ -1,0 +1,29 @@
+{
+  "name": "slidev-addon-kokoro-narration",
+  "type": "module",
+  "version": "0.1.0",
+  "description": "Run Kokoro text-to-speech narration inside Slidev decks.",
+  "license": "MIT",
+  "keywords": [
+    "slidev",
+    "slidev-addon",
+    "tts",
+    "text-to-speech",
+    "kokoro"
+  ],
+  "files": [
+    "components",
+    "utils",
+    "README.md"
+  ],
+  "engines": {
+    "slidev": ">=52.0.0"
+  },
+  "dependencies": {
+    "kokoro-js": "catalog:frontend",
+    "vue": "catalog:frontend"
+  },
+  "devDependencies": {
+    "vitest": "catalog:dev"
+  }
+}
