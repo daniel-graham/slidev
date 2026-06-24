@@ -310,7 +310,6 @@ watch(isCurrentSlide, (current) => {
       class="slidev-kokoro-narration"
       role="button"
       tabindex="-1"
-      :data-expanded="status !== 'idle'"
       :aria-disabled="!narrationText"
       :aria-busy="isBusy"
       :aria-label="buttonLabel"
@@ -320,28 +319,26 @@ watch(isCurrentSlide, (current) => {
       @keydown="onControlKeydown"
     >
       <span class="slidev-kokoro-narration__mark" :data-status="status" />
-      <span class="slidev-kokoro-narration__label">{{ buttonLabel }}</span>
+      <span>{{ buttonLabel }}</span>
     </div>
   </Teleport>
 </template>
 
 <style scoped>
 .slidev-kokoro-narration {
-  /* Top-right keeps clear of Slidev bottom nav (prev/next, sync, counter). */
   position: fixed;
-  top: 1rem;
-  right: 1rem;
-  bottom: auto;
-  z-index: 50;
+  right: 2rem;
+  bottom: 4.25rem;
+  z-index: 1000;
   pointer-events: auto;
   box-sizing: border-box;
   display: inline-flex;
   align-items: center;
-  gap: 0;
-  min-width: 2.35rem;
-  max-width: min(16rem, calc(100vw - 2rem));
+  gap: 0.5rem;
+  min-width: 7.5rem;
+  max-width: calc(100vw - 4rem);
   height: 2.35rem;
-  padding: 0 0.65rem;
+  padding: 0 0.85rem;
   border: 1px solid rgb(148 163 184 / 30%);
   border-radius: 999px;
   color: rgb(15 23 42);
@@ -353,49 +350,20 @@ watch(isCurrentSlide, (current) => {
   cursor: pointer;
   backdrop-filter: blur(10px);
   -webkit-backdrop-filter: blur(10px);
-  transition:
-    background 0.25s cubic-bezier(0.4, 0, 0.2, 1),
-    border-color 0.25s cubic-bezier(0.4, 0, 0.2, 1),
-    box-shadow 0.25s cubic-bezier(0.4, 0, 0.2, 1),
-    transform 0.25s cubic-bezier(0.4, 0, 0.2, 1),
-    padding 0.25s cubic-bezier(0.4, 0, 0.2, 1),
-    gap 0.25s cubic-bezier(0.4, 0, 0.2, 1);
+  transition: all 0.25s cubic-bezier(0.4, 0, 0.2, 1);
   transform: translateY(0);
   user-select: none;
 }
 
-.slidev-kokoro-narration__label {
-  overflow: hidden;
-  max-width: 0;
-  opacity: 0;
-  white-space: nowrap;
-  text-overflow: ellipsis;
-  transition:
-    max-width 0.25s cubic-bezier(0.4, 0, 0.2, 1),
-    opacity 0.2s ease;
-}
-
-.slidev-kokoro-narration:hover:not([aria-disabled='true']),
-.slidev-kokoro-narration[data-expanded='true'] {
-  gap: 0.5rem;
-  padding: 0 0.85rem;
-}
-
-.slidev-kokoro-narration:hover:not([aria-disabled='true']) .slidev-kokoro-narration__label,
-.slidev-kokoro-narration[data-expanded='true'] .slidev-kokoro-narration__label {
-  max-width: 12rem;
-  opacity: 1;
-}
-
 .slidev-kokoro-narration:hover:not([aria-disabled='true']) {
-  transform: translateY(-1px);
+  transform: translateY(-2px);
   background: rgb(255 255 255 / 95%);
   border-color: rgb(148 163 184 / 50%);
   box-shadow: 0 12px 32px rgb(15 23 42 / 16%), 0 6px 12px rgb(15 23 42 / 6%);
 }
 
 .slidev-kokoro-narration:active:not([aria-disabled='true']) {
-  transform: translateY(0);
+  transform: translateY(1px);
   background: rgb(255 255 255 / 80%);
   box-shadow: 0 6px 16px rgb(15 23 42 / 10%);
 }
