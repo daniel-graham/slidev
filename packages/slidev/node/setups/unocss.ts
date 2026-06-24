@@ -11,6 +11,9 @@ import { loadModule } from '../utils'
 export default async function setupUnocss(
   { clientRoot, roots, data, utils }: ResolvedSlidevOptions,
 ) {
+  if (process.env.VSCODE_CWD)
+    delete process.env.VSCODE_CWD
+
   function loadFileConfigs(root: string) {
     return [
       resolve(root, 'uno.config.ts'),

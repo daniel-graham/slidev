@@ -127,6 +127,7 @@ export function createConfigPlugin(options: ResolvedSlidevOptions): Plugin {
             allow: uniq([
               options.userWorkspaceRoot,
               options.clientRoot,
+              join(options.clientRoot, '..'),
               // Special case for PNPM global installation
               isInstalledGlobally.value
                 ? slash(options.cliRoot).replace(/\/\.pnpm\/.*$/gi, '')
